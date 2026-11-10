@@ -9,6 +9,7 @@
 // @run-at       document-start
 // @grant        none
 // @sandbox      raw
+// @noframes
 // ==/UserScript==
 
 (() => {
@@ -17,13 +18,14 @@
   if (location.hostname === 'app.credit.com') {
     const original = String.prototype.startsWith;
     String.prototype.startsWith = function (search) {
-      if (search === '9' && /^9\d{8}$/.test(String(this))) return false;
+      if (arguments.length === 1 && search === '9' && /^9\d{8}$/.test(String(this))) return false;
       return original.apply(this, arguments);
     };
     return;
   }
 
   if (location.hostname === 'www.capitalone.com') {
+    if (window !== window.top) return;
     const storageKey = 'itin-preapproval-address';
     const submitPath = '/credit-cards/decision-servicing/submit-application';
     const collectPath = '/prospects/collect-prospect-engagement';
@@ -45,10 +47,11 @@
         city: String(raw.city || '').trim().replace(/\s+/g, ' '),
         state: String(raw.state || '').trim().toUpperCase(),
         zip: String(raw.zip || '').trim(),
-        sameMailing: raw.sameMailing !== false
+        sameMailing: raw.sameMailing !== false,
+        applyBusiness: raw.applyBusiness === true
       };
       if (!a.line1 || a.line1.length > 40 || a.line2.length > 40) return null;
-      if (!/^[A-Za-z ]{1,50}$/.test(a.city) || !states.has(a.state)) return null;
+      if (!/^[\p{L} .'-]{1,50}$/u.test(a.city) || !states.has(a.state)) return null;
       if (!/^\d{5}$/.test(a.zip) || /^(\d)\1{4}$/.test(a.zip)) return null;
       return a;
     }
@@ -83,8 +86,8 @@
       if (!body || typeof body !== 'object') return text;
       let changed = false;
       if (kind === 'collect') {
-        changed = fill(body, fields[2], true) || changed;
-        changed = fill(body, fields[3], true) || changed;
+        changed = fill(body, fields[2], false) || changed;
+        if (address.applyBusiness) changed = fill(body, fields[3], false) || changed;
       }
       if (kind === 'submit' && body.applicant && typeof body.applicant === 'object') {
         changed = fill(body.applicant.physicalAddress, fields[0], false) || changed;
@@ -100,6 +103,7 @@
         if (!node || typeof node !== 'object' || seen.has(node)) continue;
         seen.add(node);
         for (let i = 0; i < fields.length; i++) {
+          if (!address.applyBusiness && (i === 3 || i === 4 || i === 5)) continue;
           if (!address.sameMailing && (i === 1 || i === 5)) continue;
           changed = fill(node, fields[i], false) || changed;
         }
@@ -111,7 +115,7 @@
     const originalFetch = window.fetch;
     if (typeof originalFetch === 'function') {
       window.fetch = function (input, init) {
-        const kind = endpoint(typeof input === 'string' ? input : input?.url);
+        const kind = endpoint(input instanceof URL ? input.href : typeof input === 'string' ? input : input?.url);
         const method = String(init?.method || input?.method || 'GET').toUpperCase();
         if (!kind || !address || method === 'GET' || method === 'HEAD') return originalFetch.apply(this, arguments);
         if (typeof init?.body === 'string') {
@@ -152,7 +156,6 @@
       };
     }
 
-    if (window !== window.top) return;
     function mount() {
       if (!document.documentElement || document.getElementById('itin-address-panel')) return;
       const host = document.createElement('div');
@@ -167,6 +170,7 @@
         '<label>State<input name="state" maxlength="2" required></label>',
         '<label>ZIP<input name="zip" inputmode="numeric" maxlength="5" required></label>',
         '<label class="check"><input name="sameMailing" type="checkbox" checked>Same mailing address</label>',
+        '<label class="check"><input name="applyBusiness" type="checkbox">Use for business address</label>',
         '<div class="actions"><button type="submit">Enable</button><button type="button" class="clear">Clear</button></div>',
         '<span role="status"></span></form></details>'
       ].join('');
@@ -180,6 +184,7 @@
       if (address) {
         for (const name of ['line1', 'line2', 'city', 'state', 'zip']) form.elements.namedItem(name).value = address[name];
         form.elements.namedItem('sameMailing').checked = address.sameMailing;
+        form.elements.namedItem('applyBusiness').checked = address.applyBusiness;
       }
       show();
       form.addEventListener('submit', (event) => {
@@ -187,6 +192,7 @@
         const next = normalize(Object.fromEntries(new FormData(form)));
         if (!next) { status.textContent = 'Check address fields'; return; }
         next.sameMailing = form.elements.namedItem('sameMailing').checked;
+        next.applyBusiness = form.elements.namedItem('applyBusiness').checked;
         address = next;
         try { sessionStorage.setItem(storageKey, JSON.stringify(address)); } catch (_) {}
         show();
@@ -194,6 +200,8 @@
       root.querySelector('.clear').addEventListener('click', () => {
         address = null;
         try { sessionStorage.removeItem(storageKey); } catch (_) {}
+        form.reset();
+        for (const name of ['line1', 'line2', 'city', 'state', 'zip']) form.elements.namedItem(name).value = '';
         show();
       });
       document.documentElement.appendChild(host);
