@@ -103,7 +103,7 @@
         if (!node || typeof node !== 'object' || seen.has(node)) continue;
         seen.add(node);
         for (let i = 0; i < fields.length; i++) {
-          if (!address.applyBusiness && (i === 3 || i === 4 || i === 5)) continue;
+          if (!address.applyBusiness && i === 3) continue;
           if (!address.sameMailing && (i === 1 || i === 5)) continue;
           changed = fill(node, fields[i], false) || changed;
         }
@@ -115,7 +115,11 @@
     const originalFetch = window.fetch;
     if (typeof originalFetch === 'function') {
       window.fetch = function (input, init) {
-        const kind = endpoint(input instanceof URL ? input.href : typeof input === 'string' ? input : input?.url);
+        let requestUrl;
+        if (input instanceof URL) requestUrl = input.href;
+        else if (typeof input === 'string') requestUrl = input;
+        else requestUrl = input?.url;
+        const kind = endpoint(requestUrl);
         const method = String(init?.method || input?.method || 'GET').toUpperCase();
         if (!kind || !address || method === 'GET' || method === 'HEAD') return originalFetch.apply(this, arguments);
         if (typeof init?.body === 'string') {
